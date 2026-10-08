@@ -92,11 +92,14 @@ type Overlap struct {
 // poller samples, and an overshoot that lasts less than the polling interval is
 // invisible to it. Working from the recorded intervals cannot miss a window.
 //
-// PipelineRuns that never started are ignored. One still running when the
-// snapshot was taken is treated as running until the latest end seen, which is
-// the least favourable reading and so cannot hide an overshoot. Kubernetes
-// timestamps have second granularity, so an interval that ends in the same
-// second it started is treated as a point and cannot overlap anything.
+// PipelineRuns that never started are ignored. A run still going has no
+// completion time; it is treated as running until one nanosecond past the
+// latest start or completion recorded in the set, so it still occupies a slot
+// when that run is itself the latest timestamp. Its stored end stays zero, so
+// an unfinished run stays distinguishable from a completed one. Kubernetes
+// stores these timestamps at one-second precision, so a finished run that
+// starts and completes in the same second is a point and is skipped: counting
+// it would report an overlap the timestamps cannot prove.
 func MaxConcurrency(prs []v1.PipelineRun) Overlap {
 	intervals := make([]Interval, 0, len(prs))
 	var latestEnd time.Time
@@ -118,6 +121,11 @@ func MaxConcurrency(prs []v1.PipelineRun) Overlap {
 		intervals = append(intervals, iv)
 	}
 
+	// Unfinished runs have no completion. Hold them open until one nanosecond
+	// past the latest start or completion, including when that timestamp is
+	// their own start. Interval.End stays zero.
+	openEnd := latestEnd.Add(time.Nanosecond)
+
 	type edge struct {
 		at    time.Time
 		delta int
@@ -126,12 +134,11 @@ func MaxConcurrency(prs []v1.PipelineRun) Overlap {
 	for _, iv := range intervals {
 		end := iv.End
 		if end.IsZero() {
-			// still running when we looked: assume it ran to the very end
-			end = latestEnd
+			end = openEnd
 		}
 		if !end.After(iv.Start) {
-			// finished within the same second it started, so it never overlapped
-			// anything we can prove
+			// a finished run that starts and completes in the same second is a
+			// point; the timestamps cannot prove it overlapped anything
 			continue
 		}
 		edges = append(edges, edge{at: iv.Start, delta: 1}, edge{at: end, delta: -1})
@@ -159,7 +166,7 @@ func MaxConcurrency(prs []v1.PipelineRun) Overlap {
 	for _, iv := range intervals {
 		end := iv.End
 		if end.IsZero() {
-			end = latestEnd
+			end = openEnd
 		}
 		if !iv.Start.After(result.At) && end.After(result.At) {
 			result.Names = append(result.Names, iv.Name)

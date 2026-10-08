@@ -97,6 +97,71 @@ func TestMaxConcurrency(t *testing.T) {
 			wantPeak:  3,
 			wantNames: []string{"a", "b", "c"},
 		},
+		{
+			name: "two still-running runs overlap",
+			prs: []v1.PipelineRun{
+				pr("a", at(0), nil),
+				pr("b", at(5), nil),
+			},
+			wantPeak:  2,
+			wantNames: []string{"a", "b"},
+		},
+		{
+			name: "unfinished runs that start after a finished run still overlap",
+			prs: []v1.PipelineRun{
+				pr("a", at(0), at(10)),
+				pr("b", at(12), nil),
+				pr("c", at(15), nil),
+			},
+			wantPeak:  2,
+			wantNames: []string{"b", "c"},
+		},
+		{
+			name: "three unfinished runs all count",
+			prs: []v1.PipelineRun{
+				pr("a", at(0), nil),
+				pr("b", at(5), nil),
+				pr("c", at(10), nil),
+			},
+			wantPeak:  3,
+			wantNames: []string{"a", "b", "c"},
+		},
+		{
+			name: "three unfinished runs all count in reverse input order",
+			prs: []v1.PipelineRun{
+				pr("c", at(10), nil),
+				pr("b", at(5), nil),
+				pr("a", at(0), nil),
+			},
+			wantPeak:  3,
+			wantNames: []string{"a", "b", "c"},
+		},
+		{
+			name: "two unfinished runs sharing a start second both count",
+			prs: []v1.PipelineRun{
+				pr("a", at(0), nil),
+				pr("b", at(0), nil),
+			},
+			wantPeak:  2,
+			wantNames: []string{"a", "b"},
+		},
+		{
+			name: "a single unfinished run counts",
+			prs: []v1.PipelineRun{
+				pr("a", at(0), nil),
+			},
+			wantPeak:  1,
+			wantNames: []string{"a"},
+		},
+		{
+			name: "a same-second finished point does not join an unfinished run",
+			prs: []v1.PipelineRun{
+				pr("a", at(0), at(0)),
+				pr("b", at(0), nil),
+			},
+			wantPeak:  1,
+			wantNames: []string{"b"},
+		},
 	}
 
 	for _, tt := range tests {
